@@ -16,387 +16,107 @@ jobs:
           gradle-version: 8.9
       - name: Generate project files
         run: |
-          mkdir -p $(dirname 'app/build.gradle.kts')
-          cat > 'app/build.gradle.kts' <<'EOF_0'
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-              id("org.jetbrains.kotlin.plugin.compose")
-              id("com.google.devtools.ksp")
-          }
-
-          android {
-              namespace = "com.tindahan.inventory"
-              compileSdk = 34
-              defaultConfig {
-                  applicationId = "com.tindahan.inventory"
-                  minSdk = 24
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
-              }
-              buildTypes { release { isMinifyEnabled = false } }
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-              kotlinOptions { jvmTarget = "17" }
-              buildFeatures { compose = true }
-          }
-
-          dependencies {
-              val room = "2.6.1"
-              implementation("androidx.room:room-runtime:$room")
-              implementation("androidx.room:room-ktx:$room")
-              ksp("androidx.room:room-compiler:$room")
-
-              implementation(platform("androidx.compose:compose-bom:2024.09.00"))
-              implementation("androidx.compose.ui:ui")
-              implementation("androidx.compose.material3:material3")
-              implementation("androidx.compose.material:material-icons-extended")
-              implementation("androidx.activity:activity-compose:1.9.2")
-              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
-              implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
-          }
-          EOF_0
-          mkdir -p $(dirname 'app/src/main/AndroidManifest.xml')
-          cat > 'app/src/main/AndroidManifest.xml' <<'EOF_1'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <!-- No INTERNET permission on purpose: the app is fully offline. -->
-              <application
-                  android:allowBackup="true"
-                  android:label="Tindahan Inventory"
-                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
-                  <activity android:name=".MainActivity" android:exported="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF_1
-          mkdir -p $(dirname 'app/src/main/java/com/tindahan/inventory/InventoryViewModel.kt')
-          cat > 'app/src/main/java/com/tindahan/inventory/InventoryViewModel.kt' <<'EOF_2'
-          package com.tindahan.inventory
-
-          import android.app.Application
-          import androidx.lifecycle.AndroidViewModel
-          import androidx.lifecycle.viewModelScope
-          import com.tindahan.inventory.data.*
-          import kotlinx.coroutines.ExperimentalCoroutinesApi
-          import kotlinx.coroutines.flow.*
-          import kotlinx.coroutines.launch
-
-          private data class Filters(val q: String, val cat: Long?, val newest: Boolean, val archived: Boolean)
-
-          @OptIn(ExperimentalCoroutinesApi::class)
-          class InventoryViewModel(app: Application) : AndroidViewModel(app) {
-              private val dao = AppDb.get(app).dao()
-
-              val query = MutableStateFlow("")
-              val categoryFilter = MutableStateFlow<Long?>(null)
-              val newestFirst = MutableStateFlow(true)
-              val showArchived = MutableStateFlow(false)
-
-              val categories: StateFlow<List<Category>> = dao.categories()
-                  .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-              val products: StateFlow<List<ProductItem>> =
-                  combine(query, categoryFilter, newestFirst, showArchived) { q, c, n, a -> Filters(q.trim(), c, n, a) }
-                      .flatMapLatest { f -> dao.search(f.q, f.cat, f.archived, if (f.newest) -1 else 1) }
-                      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-              /** Create (existing == null) or Update a product. A non-blank newCategory creates a category. */
-              fun save(existing: Product?, name: String, price: Double, stock: Int, categoryId: Long?, newCategory: String) {
-                  viewModelScope.launch {
-                      var catId = categoryId
-                      val nc = newCategory.trim()
-                      if (nc.isNotEmpty()) {
-                          dao.insertCategory(Category(name = nc))
-                          catId = dao.categoryIdByName(nc)
-                      }
-                      if (existing == null) {
-                          dao.insertProduct(Product(name = name.trim(), categoryId = catId, price = price, stock = stock))
-                      } else {
-                          dao.updateProduct(existing.copy(name = name.trim(), categoryId = catId, price = price, stock = stock))
-                      }
-                  }
-              }
-
-              fun setArchived(id: Long, archived: Boolean) {
-                  viewModelScope.launch { dao.setArchived(id, archived) }
-              }
-          }
-          EOF_2
-          mkdir -p $(dirname 'app/src/main/java/com/tindahan/inventory/MainActivity.kt')
-          cat > 'app/src/main/java/com/tindahan/inventory/MainActivity.kt' <<'EOF_3'
-          package com.tindahan.inventory
-
-          import android.os.Bundle
-          import androidx.activity.ComponentActivity
-          import androidx.activity.compose.setContent
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.foundation.lazy.LazyColumn
-          import androidx.compose.foundation.lazy.LazyRow
-          import androidx.compose.foundation.lazy.items
-          import androidx.compose.material.icons.Icons
-          import androidx.compose.material.icons.filled.*
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.graphics.Color
-          import androidx.compose.ui.text.font.FontWeight
-          import androidx.compose.ui.text.input.KeyboardType
-          import androidx.compose.ui.unit.dp
-          import androidx.lifecycle.compose.collectAsStateWithLifecycle
-          import androidx.lifecycle.viewmodel.compose.viewModel
-          import com.tindahan.inventory.data.Category
-          import com.tindahan.inventory.data.ProductItem
-
-          class MainActivity : ComponentActivity() {
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  setContent {
-                      MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF2E7D32))) {
-                          InventoryScreen()
-                      }
-                  }
-              }
-          }
-
-          @OptIn(ExperimentalMaterial3Api::class)
-          @Composable
-          fun InventoryScreen(vm: InventoryViewModel = viewModel()) {
-              val products by vm.products.collectAsStateWithLifecycle()
-              val categories by vm.categories.collectAsStateWithLifecycle()
-              val query by vm.query.collectAsStateWithLifecycle()
-              val catFilter by vm.categoryFilter.collectAsStateWithLifecycle()
-              val newest by vm.newestFirst.collectAsStateWithLifecycle()
-              val archived by vm.showArchived.collectAsStateWithLifecycle()
-
-              var showForm by remember { mutableStateOf(false) }
-              var editing by remember { mutableStateOf<ProductItem?>(null) }
-
-              Scaffold(
-                  topBar = {
-                      TopAppBar(
-                          title = { Text(if (archived) "Archived" else "My Tindahan") },
-                          actions = {
-                              IconButton(onClick = { vm.newestFirst.value = !newest }) {
-                                  Icon(
-                                      if (newest) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
-                                      contentDescription = "Sort"
-                                  )
-                              }
-                              IconButton(onClick = { vm.showArchived.value = !archived }) {
-                                  Icon(
-                                      if (archived) Icons.Default.Inventory2 else Icons.Default.Archive,
-                                      contentDescription = "Toggle archived"
-                                  )
-                              }
-                          }
-                      )
-                  },
-                  floatingActionButton = {
-                      if (!archived) {
-                          ExtendedFloatingActionButton(
-                              onClick = { editing = null; showForm = true },
-                              icon = { Icon(Icons.Default.Add, null) },
-                              text = { Text("Add product") }
-                          )
-                      }
-                  }
-              ) { padding ->
-                  Column(Modifier.padding(padding)) {
-                      OutlinedTextField(
-                          value = query,
-                          onValueChange = { vm.query.value = it },
-                          placeholder = { Text("Search products") },
-                          leadingIcon = { Icon(Icons.Default.Search, null) },
-                          trailingIcon = {
-                              if (query.isNotEmpty()) IconButton(onClick = { vm.query.value = "" }) {
-                                  Icon(Icons.Default.Close, "Clear")
-                              }
-                          },
-                          singleLine = true,
-                          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                      )
-                      LazyRow(
-                          contentPadding = PaddingValues(horizontal = 16.dp),
-                          horizontalArrangement = Arrangement.spacedBy(8.dp)
-                      ) {
-                          item {
-                              FilterChip(selected = catFilter == null, onClick = { vm.categoryFilter.value = null }, label = { Text("All") })
-                          }
-                          items(categories, key = { it.id }) { c ->
-                              FilterChip(
-                                  selected = catFilter == c.id,
-                                  onClick = { vm.categoryFilter.value = if (catFilter == c.id) null else c.id },
-                                  label = { Text(c.name) }
-                              )
-                          }
-                      }
-                      Text(
-                          (if (newest) "Latest to oldest" else "Oldest to latest") + " • ${products.size} item(s)",
-                          style = MaterialTheme.typography.labelMedium,
-                          modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                      )
-
-                      if (products.isEmpty()) {
-                          Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                              Text(
-                                  if (archived) "No archived products" else "No products yet.\nTap “Add product” to start.",
-                                  color = Color.Gray
-                              )
-                          }
-                      } else {
-                          LazyColumn(
-                              contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-                              verticalArrangement = Arrangement.spacedBy(8.dp)
-                          ) {
-                              items(products, key = { it.product.id }) { item ->
-                                  ProductCard(
-                                      item = item,
-                                      onEdit = { editing = item; showForm = true },
-                                      onArchiveToggle = { vm.setArchived(item.product.id, !item.product.archived) }
-                                  )
-                              }
-                          }
-                      }
-                  }
-              }
-
-              if (showForm) {
-                  ProductFormDialog(
-                      existing = editing,
-                      categories = categories,
-                      onDismiss = { showForm = false },
-                      onSave = { name, price, stock, catId, newCat ->
-                          vm.save(editing?.product, name, price, stock, catId, newCat)
-                          showForm = false
-                      }
-                  )
-              }
-          }
-
-          @Composable
-          fun ProductCard(item: ProductItem, onEdit: () -> Unit, onArchiveToggle: () -> Unit) {
-              val p = item.product
-              Card(Modifier.fillMaxWidth()) {
-                  Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                      Column(Modifier.weight(1f)) {
-                          Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                          Text(item.categoryName ?: "Uncategorized", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                          Spacer(Modifier.height(4.dp))
-                          Text("₱%.2f  •  Stock: %d".format(p.price, p.stock), style = MaterialTheme.typography.bodyMedium)
-                      }
-                      if (!p.archived) {
-                          IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, "Edit") }
-                          IconButton(onClick = onArchiveToggle) { Icon(Icons.Default.Archive, "Archive") }
-                      } else {
-                          IconButton(onClick = onArchiveToggle) { Icon(Icons.Default.Unarchive, "Restore") }
-                      }
-                  }
-              }
-          }
-
-          @Composable
-          fun ProductFormDialog(
-              existing: ProductItem?,
-              categories: List<Category>,
-              onDismiss: () -> Unit,
-              onSave: (String, Double, Int, Long?, String) -> Unit
-          ) {
-              val p = existing?.product
-              var name by remember { mutableStateOf(p?.name ?: "") }
-              var price by remember { mutableStateOf(p?.price?.toString() ?: "") }
-              var stock by remember { mutableStateOf(p?.stock?.toString() ?: "") }
-              var catId by remember { mutableStateOf(p?.categoryId) }
-              var newCat by remember { mutableStateOf("") }
-              var addingCat by remember { mutableStateOf(false) }
-              var error by remember { mutableStateOf<String?>(null) }
-
-              AlertDialog(
-                  onDismissRequest = onDismiss,
-                  title = { Text(if (p == null) "Add product" else "Edit product") },
-                  text = {
-                      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                          OutlinedTextField(name, { name = it }, label = { Text("Product name") }, singleLine = true)
-                          OutlinedTextField(
-                              price, { price = it }, label = { Text("Price (₱)") }, singleLine = true,
-                              keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                          )
-                          OutlinedTextField(
-                              stock, { stock = it }, label = { Text("Stock quantity") }, singleLine = true,
-                              keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number)
-                          )
-                          Text("Category", style = MaterialTheme.typography.labelLarge)
-                          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                              items(categories, key = { it.id }) { c ->
-                                  FilterChip(
-                                      selected = catId == c.id && !addingCat,
-                                      onClick = { catId = c.id; addingCat = false; newCat = "" },
-                                      label = { Text(c.name) }
-                                  )
-                              }
-                              item {
-                                  AssistChip(
-                                      onClick = { addingCat = true },
-                                      label = { Text("New") },
-                                      leadingIcon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp)) }
-                                  )
-                              }
-                          }
-                          if (addingCat) {
-                              OutlinedTextField(newCat, { newCat = it }, label = { Text("New category name") }, singleLine = true)
-                          }
-                          error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                      }
-                  },
-                  confirmButton = {
-                      TextButton(onClick = {
-                          val pr = price.toDoubleOrNull()
-                          val st = stock.ifBlank { "0" }.toIntOrNull()
-                          when {
-                              name.isBlank() -> error = "Enter a product name"
-                              pr == null || pr < 0 -> error = "Enter a valid price"
-                              st == null || st < 0 -> error = "Enter a valid stock"
-                              else -> onSave(name, pr, st, catId, if (addingCat) newCat else "")
-                          }
-                      }) { Text("Save") }
-                  },
-                  dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-              )
-          }
-          EOF_3
-          mkdir -p $(dirname 'app/src/main/java/com/tindahan/inventory/data/Db.kt')
-          cat > 'app/src/main/java/com/tindahan/inventory/data/Db.kt' <<'EOF_4'
-          package com.tindahan.inventory.data
-
-          import android.content.Context
-          import androidx.room.*
-          import kotlinx.coroutines.flow.Flow
-
-          @Entity(tableName = "categories", indices = [Index(value = ["name"], unique = true)])
-          data class Category(
-              @PrimaryKey(autoGenerate = true) val id: Long = 0,
-              val name: String
-          )
-
-          @Entity(tableName = "products")
-          data class Product(
-              @PrimaryKey(autoGenerate = true) val id: Long = 0,
-              val name: String,
-              val categoryId: Long?,
-              val price: Double,
-              val stock: Int,
-              val archived: Boolean = false,
-              val createdAt: Long = System.currentTimeMillis()
-          )
-
-          data class ProductItem(
-              @Embedded val p
+          base64 -d <<'EOF_B64' | tar xz
+          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
+          erE8lsfyWB7LY3ksX0n5fwFJvsoAeAAA
+          EOF_B64
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TindahanInventory-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
