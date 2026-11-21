@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1078411945599",
+    "project_id": "tindaham-inventory",
+    "storage_bucket": "tindaham-inventory.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1078411945599:android:baae6b8217f22c94e3014a",
+        "android_client_info": {
+          "package_name": "com.tindahan.inventory"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMJ-K1kwElz3EeSizj2kI4psfbex0E00Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
